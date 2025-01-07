@@ -1,0 +1,99 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+R.version.string
+
+```
+
+```{r}
+# Install the ivmodel package 
+#if (!requireNamespace("ivmodel", quietly = TRUE)) {
+# install.packages("ivmodel")
+#}
+#install.packages("cobalt")
+if (!require("OutcomeWeights")) install.packages("OutcomeWeights", dependencies = TRUE)
+library(OutcomeWeights)
+# Load required libraries
+library(ivmodel)
+library(cobalt)
+library(dplyr)
+library(ggplot2)
+library(grf)
+if (!require("MatchIt")) install.packages("MatchIt", dependencies = TRUE)
+library(MatchIt)
+
+```
+
+
+```{r}
+# Load the Card dataset
+data(card.data)
+card <- as.data.frame(card.data)
+
+# View the first few rows of the dataset
+head(card)
+```
+```{r}
+# Brief descriptive statistics
+summary(card[, !grepl("^reg", names(card))])
+```
+```{r}
+colSums(is.na(card))
+```
+```{r}
+card = na.omit(card)
+```
+
+```{r}
+ggplot(card, aes(x = educ)) + geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Education Level", x = "Years of Education", y = "Frequency")
+```
+```{r}
+# Covariate Balance Assessment
+# Define treatment and covariates
+treatment <- card$enroll
+covariates <- subset(card, select = -c(enroll, lwage, nearc2, nearc4))
+outcome <- card$lwage
+instrument <- card[, c("nearc2", "nearc4")]
+```
+
+```{r}
+# Generate pre-adjustment covariate balance using cobalt
+bal <- bal.tab(treatment ~ ., data = covariates)
+print(bal)
+```
+```{r}
+love.plot(bal) 
+```
+The standardized mean differences (Diff.Un) indicate how well covariates are balanced between the treated and control groups. In this case: 
+
+- Many covariates (e.g., educ, age, IQ, expersq) are far from 0, confirming that the treated and control groups are not well-matched before adjustment. Some covariates, such as educ (0.4841), age (-0.3285), and expersq (-0.6188), have large absolute standardized mean differences (> 0.1), indicating significant imbalance. 
+- Other covariates, such as smsa (0.1042), are near the acceptable threshold (SMD < 0.1), but there is still some imbalance.
+- Variances for binary indicators, such as south66, black, and smsa66, are better balanced with smaller differences.
+
+```{r}
+# Perform nearest neighbor matching
+psm <- matchit(treatment ~ educ + age + fatheduc + motheduc + married + IQ + exper, 
+               data = card, method = "nearest")
+
+# Extract matched data
+matched_data <- match.data(psm)
+```
+```{r}
+# Check balance after matching
+bal_after <- bal.tab(psm)
+print(bal_after)
+
+# Visualize with love plot
+love.plot(bal_after)
+```
+- After adjustment (propensity score matching), the standardized mean differences (SMD) for most covariates are well below the threshold of 0.1 (acceptable balance).:
+educ: SMD = -0.0134 (balanced).
+age: SMD = 0.0510 (balanced).
+exper: SMD = 0.0510 (balanced).
+married: SMD = 0.1092 (slightly above 0.1, potential imbalance).
+Overall, balance has improved significantly compared to pre-matching results.
+
+- Matching has reduced the dataset to 172 treated and 172 control units, meaning unmatched units were discarded. This ensures comparability between treated and control groups at the cost of reduced sample size.
