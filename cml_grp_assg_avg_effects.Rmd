@@ -1,0 +1,156 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+# Section 1 Average Effects
+
+```{r}
+if (!require("OutcomeWeights")) install.packages("OutcomeWeights", dependencies = TRUE); library(OutcomeWeights)
+if (!require("hdm")) install.packages("hdm", dependencies = TRUE); library(hdm)
+if (!require("grf")) install.packages("grf", dependencies = TRUE); library(grf)
+if (!require("cobalt")) install.packages("cobalt", dependencies = TRUE); library(cobalt)
+if (!require("tidyverse")) install.packages("tidyverse", dependencies = TRUE); library(tidyverse)
+if (!require("viridis")) install.packages("viridis", dependencies = TRUE); library(viridis)
+if (!require("gridExtra")) install.packages("gridExtra", dependencies = TRUE); library(gridExtra)
+library(ivmodel)
+```
+
+
+```{r}
+library(mice)
+
+imputed_data <- mice(card.data, m = 5, method = "cart", seed = 123)  # Predictive mean matching
+data <- complete(imputed_data)
+```
+
+
+```{r}
+data<-card.data
+data = na.omit(data)
+```
+
+
+```{r}
+# Treatment
+D = data$enroll
+# Instrument
+Z = data$nearc2
+# Outcome
+Y = data$lwage
+# Controls
+X = model.matrix(~ 0 +  age + fatheduc + motheduc + weight + momdad14 + sinmom14 + step14 + black + smsa + south + smsa66 + wage + KWW + IQ + married + libcrd14 + exper + expersq + region, data = data)
+var_nm = c(  "age"   ,   "fatheduc", "motheduc" ,"weight" ,"momdad14"
+           ,"sinmom14" ,"step14"  , "black"                     ,"smsa"     ,"south"  ,"smsa66"  , "wage"     ,"KWW"      ,"IQ"      , "married"                    ,"libcrd14" ,"exper"  ,"expersq"  ,"region" )
+colnames(X) = var_nm
+```
+
+X = model.matrix(~ 0 + nearc2  + nearc4 + age + fatheduc + motheduc + weight + momdad14 + sinmom14 + step14 + reg661 + reg662 + reg663 + reg664 + reg665 + reg666 + reg667 + reg668 + reg669 + south66 + black + smsa + south + smsa66 + wage + KWW + IQ + married + libcrd14 + exper + expersq + region, data = card.data)
+var_nm = c("nearc2"  , "nearc4"    ,   "age"   ,   "fatheduc", "motheduc" ,"weight" ,"momdad14"
+           ,"sinmom14" ,"step14"   ,"reg661"   ,"reg662"   ,"reg663"  , "reg664"   
+           ,"reg665"  ,"reg666"   ,"reg667"   ,"reg668"  , "reg669"  , "south66" , "black"                     ,"smsa"     ,"south"  ,"smsa66"  , "wage"     ,"KWW"      ,"IQ"      , "married"                    ,"libcrd14" ,"exper"  ,"expersq"  ,"region" )
+
+### 2 Fold
+
+```{r}
+# 2 folds
+dml_2f = dml_with_smoother(Y,D,X,Z,
+                           n_cf_folds = 2)
+results_dml_2f = summary(dml_2f)
+plot(dml_2f)
+```
+```{r}
+omega_dml_2f = get_outcome_weights(dml_2f)
+cat("ω'Y replicates point etimates?", 
+    all.equal(as.numeric(omega_dml_2f$omega %*% Y),
+      as.numeric(results_dml_2f[,1])
+    ))
+```
+
+
+```{r, echo = F, results='hide'}
+# As the `dml_with_smoother()` objects are memory intensive because they store several $N \times N$ smoother matrices, it is convenient to remove the 2-fold one before proceeding. Comment out if you have enough RAM and want to use the objects later on.
+rm(dml_2f)
+gc()
+```
+
+
+
+### 5-fold
+
+Run double ML also with 5-fold cross-fitting:
+
+```{r}
+# 5 folds
+dml_5f = dml_with_smoother(Y,D,X,Z,
+                           n_cf_folds = 5)
+results_dml_5f = summary(dml_5f)
+plot(dml_5f)
+```
+
+extract the weights and confirm numerical equivalence:
+
+```{r}
+omega_dml_5f = get_outcome_weights(dml_5f)
+cat("ω'Y replicates point etimates?", 
+    all.equal(as.numeric(omega_dml_5f$omega %*% Y),
+      as.numeric(results_dml_5f[,1])
+    ))
+```
+
+
+```{r, echo = F, results='hide'}
+# As the `dml_with_smoother()` objects are memory intensive because they store several $N \times N$ smoother matrices, it is convenient to remove the 5-fold one before proceeding. Comment out if you have enough RAM and want to use the objects later on.
+rm(dml_5f)
+gc()
+```
+
+
+## Check covariate balancing
+
+We use the infrastructure of the `cobalt` package to plot Standardized Mean Differences where we need to flip the sign of the untreated outcome weights to make them compatible with the package framework. This is achieved by multiplying the outcome weights by $2 \times D-1$:
+gr
+```{r, message = F}
+threshold = 0.1
+
+create_love_plot = function(title, index) {
+  love.plot(
+    D ~ X,
+    weights = list(
+      "2-fold" = omega_dml_2f$omega[index, ] * (2*D-1),
+      "5-fold" = omega_dml_5f$omega[index, ] * (2*D-1)
+    ),
+    position = "bottom",
+    title = title,
+    thresholds = c(m = threshold),
+    var.order = "unadjusted",
+    binary = "std",
+    abs = TRUE,
+    line = TRUE,
+    colors = viridis(3), # color-blind-friendly
+    shapes = c("circle", "triangle", "diamond")
+  )
+}
+
+# Now you can call this function for each plot:
+love_plot_plr = create_love_plot("PLR", 1)
+love_plot_plriv = create_love_plot("PLR-IV", 2)
+love_plot_aipw = create_love_plot("AIPW", 3)
+love_plot_waipw = create_love_plot("Wald-AIPW", 4)
+love_plot_plr
+love_plot_plriv
+love_plot_aipw
+love_plot_waipw
+```
+
+
+Create the combined plot that ends up in the paper as Figure 2:
+
+```{r, results='hide', fig.width=12, fig.height=8}
+figure2 = grid.arrange(
+  love_plot_plr, love_plot_aipw,
+  love_plot_plriv,love_plot_waipw,
+  nrow = 2
+)
+```
