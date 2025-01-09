@@ -23,7 +23,8 @@ library(ggplot2)
 library(grf)
 if (!require("MatchIt")) install.packages("MatchIt", dependencies = TRUE)
 library(MatchIt)
-
+if (!require("mice")) install.packages("mice", dependencies = TRUE)
+library(mice)
 ```
 
 
@@ -42,21 +43,62 @@ summary(card[, !grepl("^reg", names(card))])
 ```{r}
 colSums(is.na(card))
 ```
+IMPUTED DATA
 ```{r}
-card = na.omit(card)
+imputed_data <- mice(card.data, m = 5, method = "cart", seed = 123)  # Predictive mean matching
+imputed_card <- complete(imputed_data)
+```
+```{r}
+# Covariate Balance Assessment
+treatment_imputed <- imputed_card$enroll
+covariates_imputed <- subset(imputed_card, select = -c(enroll, lwage, nearc2, nearc4))
+outcome_imputed <- imputed_card$lwage
+instrument_imputed <- imputed_card[, c("nearc2", "nearc4")]
 ```
 
 ```{r}
-ggplot(card, aes(x = educ)) + geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+# Generate pre-adjustment covariate balance using cobalt
+bal <- bal.tab(treatment_imputed ~ ., data = covariates_imputed)
+print(bal)
+```
+```{r}
+love.plot(bal) 
+```
+```{r}
+# Perform nearest neighbor matching
+psm <- matchit(treatment_imputed ~ educ + age + fatheduc + motheduc + married + IQ + exper, 
+               data = imputed_card, method = "nearest")
+
+# Extract matched data
+matched_data <- match.data(psm)
+```
+```{r}
+# Check balance after matching
+bal_after <- bal.tab(psm)
+print(bal_after)
+
+# Visualize with love plot
+love.plot(bal_after)
+```
+
+OMITTED DATA
+
+```{r}
+omitted_card = na.omit(card)
+```
+
+
+
+```{r}
+ggplot(omitted_card, aes(x = educ)) + geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
   labs(title = "Distribution of Education Level", x = "Years of Education", y = "Frequency")
 ```
 ```{r}
 # Covariate Balance Assessment
-# Define treatment and covariates
-treatment <- card$enroll
-covariates <- subset(card, select = -c(enroll, lwage, nearc2, nearc4))
-outcome <- card$lwage
-instrument <- card[, c("nearc2", "nearc4")]
+treatment <- omitted_card$enroll
+covariates <- subset(omitted_card, select = -c(enroll, lwage, nearc2, nearc4))
+outcome <- omitted_card$lwage
+instrument <- omitted_card[, c("nearc2", "nearc4")]
 ```
 
 ```{r}
@@ -76,7 +118,7 @@ The standardized mean differences (Diff.Un) indicate how well covariates are bal
 ```{r}
 # Perform nearest neighbor matching
 psm <- matchit(treatment ~ educ + age + fatheduc + motheduc + married + IQ + exper, 
-               data = card, method = "nearest")
+               data = omitted_card, method = "nearest")
 
 # Extract matched data
 matched_data <- match.data(psm)
