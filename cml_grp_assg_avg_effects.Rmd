@@ -154,3 +154,229 @@ figure2 = grid.arrange(
   nrow = 2
 )
 ```
+
+## Hetrogenous Effects
+```{r}
+### Externally calculate outcome nuisance
+rf_Y.hat_default = regression_forest(X,Y)
+rf_Y.hat_tuned = regression_forest(X,Y,tune.parameters = "all")
+Y.hat_default = predict(rf_Y.hat_default)$predictions
+Y.hat_tuned = predict(rf_Y.hat_tuned)$predictions
+```
+
+```{r}
+# And get smoother matrices
+S_default = get_forest_weights(rf_Y.hat_default)
+S_tuned = get_forest_weights(rf_Y.hat_tuned)
+```
+
+```{r}
+cat("RF affine smoother?", 
+    all.equal(rowSums(as.matrix(S_default)),
+      rep(1,length(Y))
+    ))
+```
+
+```{r}
+# Run CF with the pre-specified outcome nuisance 
+cf_default = causal_forest(X,Y,D,Y.hat=Y.hat_default)
+cf_tuned = causal_forest(X,Y,D,Y.hat=Y.hat_tuned,tune.parameters = "all")
+```
+
+```{r}
+cates_default = predict(cf_default)$predictions
+cates_tuned = predict(cf_tuned)$predictions
+```
+
+```{r}
+omega_cf_default = get_outcome_weights(cf_default, S = S_default)
+omega_cf_tuned = get_outcome_weights(cf_tuned, S = S_tuned)
+```
+
+```{r}
+cat("ω'Y replicates CATE point estimates (default)?", 
+    all.equal(as.numeric(omega_cf_default$omega %*% Y),
+      as.numeric(cates_default)
+    ))
+cat("\nω'Y replicates CATE point estimates (tuned)?", 
+    all.equal(as.numeric(omega_cf_tuned$omega %*% Y),
+      as.numeric(cates_tuned)
+    ))
+```
+```{r}
+cb_cate_default = standardized_mean_differences(X,D,omega_cf_default$omega,X)
+cb_cate_tuned = standardized_mean_differences(X,D,omega_cf_tuned$omega,X)
+
+smd_default = t(abs(cb_cate_default[,3,]))
+smd_tuned = t(abs(cb_cate_tuned[,3,]))
+
+# Melt the smd_default matrix to long format
+df_default_long = melt(smd_default)
+df_default_long$Group = "smd_default"  # Add a group identifier
+
+# Melt the smd_tuned matrix to long format
+df_tuned_long = melt(smd_tuned)
+df_tuned_long$Group = "smd_tuned"  # Add a group identifier
+
+# Combine the two data frames
+df_long = rbind(df_default_long, df_tuned_long)
+
+# Rename the columns for clarity
+colnames(df_long) = c("Row", "Variable", "Value", "Group")
+
+# Create the ggplot
+figure3 = ggplot(df_long, aes(x = factor(Variable, levels = rev(unique(Variable))), y = Value, fill = Group)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = element_blank(), y = "Absolute Standardized Mean Differences") +
+  scale_fill_manual(values = viridis(2),
+                    name = element_blank(),
+                    labels = c("default", "tuned")) +
+  theme_minimal() +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") + 
+  coord_flip()
+figure3
+```
+```{r}
+ivf_default = instrumental_forest(X,Y,D,Z,Y.hat=Y.hat_default)
+ivf_tuned = instrumental_forest(X,Y,D,Z,Y.hat=Y.hat_tuned,tune.parameters = "all")
+```
+```{r}
+clates_default = predict(ivf_default)$predictions
+clates_tuned = predict(ivf_tuned)$predictions
+omega_if_default = get_outcome_weights(ivf_default, S = S_default)
+omega_if_tuned = get_outcome_weights(ivf_tuned, S = S_tuned)
+cat("ω'Y replicates CLATE point estimates (default)?", 
+    all.equal(as.numeric(omega_if_default$omega %*% Y),
+      as.numeric(clates_default)
+    ))
+cat("\nω'Y replicates CLATE point estimates (tuned)?", 
+    all.equal(as.numeric(omega_if_tuned$omega %*% Y),
+      as.numeric(clates_tuned)
+    ))
+```
+
+```{r}
+cb_clate_default = standardized_mean_differences(X,D,omega_if_default$omega,X)
+cb_clate_tuned = standardized_mean_differences(X,D,omega_if_tuned$omega,X)
+
+smd_default = t(abs(cb_clate_default[,3,]))
+smd_tuned = t(abs(cb_clate_tuned[,3,]))
+
+# Melt the smd_default matrix to long format
+df_default_long = melt(smd_default)
+df_default_long$Group = "smd_default"  # Add a group identifier
+
+# Melt the smd_tuned matrix to long format
+df_tuned_long = melt(smd_tuned)
+df_tuned_long$Group = "smd_tuned"  # Add a group identifier
+
+# Combine the two data frames
+df_long = rbind(df_default_long, df_tuned_long)
+
+# Rename the columns for clarity
+colnames(df_long) = c("Row", "Variable", "Value", "Group")
+
+# Create the ggplot
+ggplot(df_long, aes(x = factor(Variable, levels = rev(unique(Variable))), y = Value, fill = Group)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = element_blank(), y = "Absolute Standardized Mean Differences") +
+  scale_fill_manual(values = viridis(2),
+                    name = element_blank(),
+                    labels = c("default", "tuned")) +
+  theme_minimal() +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") + 
+  coord_flip()
+```
+
+```{r}
+data = data.frame(
+  value = c(cates_default, cates_tuned,clates_default, clates_tuned),
+  category = rep(c("grf CATEs default", "grf CATEs tuned","grf CLATEs default", "grf CLATEs tuned"), each = length(cates_default))
+)
+
+ggplot(data, aes(y = category, x = value, fill = category)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "black", linetype = "solid") +
+  labs(
+    x = "Estimate",
+    y = "Estimator/Implementation"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+if (!require("viridis")) install.packages("viridis", dependencies = TRUE); library(viridis)
+if (!require("reshape2")) install.packages("reshape2", dependencies = TRUE); library(reshape2)
+if (!require("ggridges")) install.packages("ggridges", dependencies = TRUE); library(ggridges)
+```
+
+
+```{r}
+# Create the ridge plot
+ggplot(data, aes(x = value, y = category, fill = category)) +
+  geom_density_ridges(alpha = 0.7, scale = 1) +
+  labs(
+    x = "Estimate",
+    y = "Estimator/Implementation"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+summary_weights_cf_default = summary(omega_cf_default, quiet = TRUE)
+summary_weights_cf_tuned = summary(omega_cf_tuned, quiet = TRUE)
+summary_weights_if_default = summary(omega_if_default, quiet = TRUE)
+summary_weights_if_tuned = summary(omega_if_tuned, quiet = TRUE)
+
+for (i in 1:dim(summary_weights_if_tuned)[3]) {
+  # Extract untreated and treated weights for each group
+  sum_weights_cf_default_untreated = summary_weights_cf_default[1,,i]
+  sum_weights_cf_default_treated = summary_weights_cf_default[2,,i]
+  
+  sum_weights_cf_tuned_untreated = summary_weights_cf_tuned[1,,i]
+  sum_weights_cf_tuned_treated = summary_weights_cf_tuned[2,,i]
+  
+  sum_weights_if_default_untreated = summary_weights_if_default[1,,i]
+  sum_weights_if_default_treated = summary_weights_if_default[2,,i]
+  
+  sum_weights_if_tuned_untreated = summary_weights_if_tuned[1,,i]
+  sum_weights_if_tuned_treated = summary_weights_if_tuned[2,,i]
+  
+  # Combine all vectors into a single data frame, with a new 'Treatment' column
+  df_weights <- data.frame(
+    Value = c(
+      sum_weights_cf_default_untreated, sum_weights_cf_default_treated,
+      sum_weights_cf_tuned_untreated, sum_weights_cf_tuned_treated,
+      sum_weights_if_default_untreated, sum_weights_if_default_treated,
+      sum_weights_if_tuned_untreated, sum_weights_if_tuned_treated
+    ),
+    Group = factor(c(
+      rep("CF default", length(sum_weights_cf_default_untreated) + length(sum_weights_cf_default_treated)),
+      rep("CF tuned", length(sum_weights_cf_tuned_untreated) + length(sum_weights_cf_tuned_treated)),
+      rep("IF default", length(sum_weights_if_default_untreated) + length(sum_weights_if_default_treated)),
+      rep("IF tuned", length(sum_weights_if_tuned_untreated) + length(sum_weights_if_tuned_treated))
+    )),
+    Treatment = factor(c(
+      rep("Untreated", length(sum_weights_cf_default_untreated)),
+      rep("Treated", length(sum_weights_cf_default_treated)),
+      rep("Untreated", length(sum_weights_cf_tuned_untreated)),
+      rep("Treated", length(sum_weights_cf_tuned_treated)),
+      rep("Untreated", length(sum_weights_if_default_untreated)),
+      rep("Treated", length(sum_weights_if_default_treated)),
+      rep("Untreated", length(sum_weights_if_tuned_untreated)),
+      rep("Treated", length(sum_weights_if_tuned_treated))
+    ))
+  )
+  
+  # Plot with ggplot and ggridges
+  g <- ggplot(df_weights, aes(x = Value, y = Group, fill = Treatment)) +
+    geom_boxplot(position = position_dodge(width = 0.75)) +
+    labs(x = dimnames(summary_weights_cf_tuned)[[3]][i], y = NULL) +
+    theme_minimal() +
+    theme(legend.position = "bottom")  # Place legend at the bottom
+  print(g)
+}
+
+```
