@@ -1,0 +1,195 @@
+---
+title: "Treatment Effect Estimators as Weighted Outcomes"
+subtitle: "Empirical Monte Carlo illustration"
+author: "Michael C. Knaus"
+date: "11/24"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+*Replication comment: The default values of the `mlr3` environment are in constant change. This can lead to different results, while probably keeping the main insights intact. To make sure you replicate the results of the paper, run the notebooks within the replication docker.*
+
+This notebook runs the Empirical Monte Carlo Study (EMCS) illustration described in Section 4.4 of the paper.
+
+First, load packages and set the seed:
+
+```{r, message = FALSE, warning=FALSE}
+library(tidyverse)
+library(DoubleML)
+library(ggmagnify)
+library(grf)
+library(hdm)
+library(mlr3)
+library(mlr3learners)
+
+set.seed(1234)
+```
+
+Next, load the data. Here we use the 401(k) data of the `hdm` package. However, you can adapt the following code chunk to load any suitable data of your choice. Just make sure to call the treatment `D`, covariates `X`, and instrument `Z`. The rest of the notebook should run without further modifications.
+
+```{r}
+ # Find variable description if you type ?pension in console
+data<-card.data
+data = na.omit(data)
+
+# Treatment
+D = data$enroll
+# Instrument
+Z = data$nearc2
+# Controls
+X = model.matrix(~ 0 +  age + fatheduc + motheduc + weight + momdad14 + sinmom14 + step14 + black + smsa + south + smsa66 + wage + KWW + IQ + married + libcrd14 + exper + expersq + region, data = data)
+```
+
+```{r}
+print(length(D))  # Number of elements in D
+print(nrow(X))    # Number of rows in X
+print(ncol(X))    # Number of columns in X
+print(length(Z))  # Number of elements in Z
+```
+
+Then define the `simulation(r,a,b)` functions running the EMCS `r` times with simulated outcome $Y_i^* = a + b D_i$ and returns the point estimates:
+
+```{r}
+simulation = function(r,a,b) {
+  n = length(D) # Assuming all vectors are of the same length
+  dml_plr_rf = dml_plr_xgb = dml_aipw_rf = dml_aipw_xgb = 
+  dml_plriv_rf = dml_plriv_xgb = dml_aipwiv_rf = dml_aipwiv_xgb = rep(NA,r)
+  cforest = iforest = matrix(NA,n,r)
+  
+  for (i in 1:r) {
+    print(i)
+    
+    indices = sample(1:n, size = n, replace = TRUE)
+    d = D[indices]
+    x = X[indices,]
+    z = Z[indices]
+    y = a + b * d
+    
+    ### No instrument
+    ## DoubleML
+    # matrix interface to DoubleMLData
+    dml_data = double_ml_data_from_matrix(X=x, y=y, d=d)
+    # RF
+    lrn_ranger = lrn("regr.ranger")
+    lrn_ranger_prob = lrn("classif.ranger")
+    
+    dml_plr_ranger = DoubleMLPLR$new(dml_data, ml_l=lrn_ranger, ml_m=lrn_ranger)
+    dml_plr_ranger$fit()
+    dml_plr_rf[i] = dml_plr_ranger$coef
+    
+    dml_aipw_ranger = DoubleMLIRM$new(dml_data, lrn_ranger, lrn_ranger_prob)
+    dml_aipw_ranger$fit()
+    dml_aipw_rf[i] = dml_aipw_ranger$coef
+    
+    # xgb
+    lrn_xgb = lrn("regr.xgboost")
+    lrn_xgb_prob = lrn("classif.xgboost")
+    
+    dml_plr_xg = DoubleMLPLR$new(dml_data, ml_l=lrn_xgb, ml_m=lrn_xgb)
+    dml_plr_xg$fit()
+    dml_plr_xgb[i] = dml_plr_xg$coef
+    
+    dml_aipw_xg = DoubleMLIRM$new(dml_data, lrn_xgb, lrn_xgb_prob)
+    dml_aipw_xg$fit()
+    dml_aipw_xgb[i] = dml_aipw_xg$coef
+    
+    ## grf
+    cf = causal_forest(x,y,d)
+    cforest[,i] = predict(cf)$predictions
+    
+    
+    ### With instrument
+    ## DoubleML
+    dml_data = double_ml_data_from_matrix(X=x, y=y, d=d, z=z)
+    dml_plriv_ranger = DoubleMLPLIV$new(dml_data, ml_l=lrn_ranger, ml_m=lrn_ranger, ml_r = lrn_ranger)
+    dml_plriv_ranger$fit()
+    dml_plriv_rf[i] = dml_plriv_ranger$coef
+    
+    dml_aipwiv_ranger = DoubleMLIIVM$new(dml_data, lrn_ranger, lrn_ranger_prob, lrn_ranger_prob)
+    dml_aipwiv_ranger$fit()
+    dml_aipwiv_rf[i] = dml_aipwiv_ranger$coef
+    
+    
+    # xgb
+    dml_plriv_xg = DoubleMLPLIV$new(dml_data, ml_l=lrn_xgb, ml_m=lrn_xgb, ml_r = lrn_xgb)
+    dml_plriv_xg$fit()
+    dml_plriv_xgb[i] = dml_plriv_xg$coef
+    
+    dml_aipwiv_xg = DoubleMLIIVM$new(dml_data, lrn_xgb, lrn_xgb_prob, lrn_xgb_prob)
+    dml_aipwiv_xg$fit()
+    dml_aipwiv_xgb[i] = dml_aipwiv_xg$coef
+    
+    ## grf
+    cf = instrumental_forest(x,y,d,z)
+    iforest[,i] = predict(cf)$predictions
+    
+  }
+  return(list(dml_plr_rf, dml_plr_xgb, dml_aipw_rf, dml_aipw_xgb, cforest,
+              dml_plriv_rf, dml_plriv_xgb, dml_aipwiv_rf, dml_aipwiv_xgb, iforest))
+}
+```
+
+Run 100 replication with `a=b=1`:
+
+```{r, results='hide'}
+results = simulation(100,1,1)
+```
+
+Plot the raw results:
+
+```{r}
+# Customized labels for each vector
+custom_labels = c("PLR DML RF", "PLR DML XGB", 
+                   "AIPW DML RF", "AIPW DML XGB", "CF grf RF",
+                   "PLR-IV DML RF", "PLR-IV DML XGB", 
+                   "Wald-AIPW DML RF", "Wald-AIPW DML XGB", "IF grf RF")
+
+# Initialize an empty data frame to store results
+data = data.frame(Value = numeric(0), Group = character(0))
+
+# Loop over the list of vectors and append them to the data frame
+for (i in 1:length(custom_labels)) {
+  # Create a temporary data frame for the current vector
+  temp_df = data.frame(Value = as.vector(results[[i]]), Group = custom_labels[i])
+  
+  # Append the temporary data frame to the main data frame
+  data = rbind(data, temp_df)
+}
+
+data$Group = factor(data$Group, levels = rev(custom_labels), label = rev(custom_labels))
+  
+# Create the boxplot with ggplot2
+g = ggplot(data, aes(x = Group, y = Value)) +
+  geom_hline(yintercept = 1, linetype = "solid", color="black", linewidth=0.5) +
+  geom_boxplot(fill="grey") +
+  coord_flip() + # Makes the boxplots horizontal
+  theme_light() +
+  labs(x = "Estimator / Implementation", y = "Estimate", fill = "")
+g
+```
+
+Plot the results with zooming (Figure 1 in paper):
+
+```{r}
+figure1 = g + geom_magnify(from = c(xmin = 9.5, xmax = 10.5, ymin = 0.996, ymax = 1.003),
+                          to = c(xmin = 9.35, xmax = 10.45, ymin = 1.05, ymax = 1.19),
+                 corners = 0.1, shadow = TRUE) + 
+  geom_magnify(from = c(xmin = 7.45, xmax = 8.5, ymin = 0.996, ymax = 1.003),
+               to = c(xmin = 7.45, xmax = 8.55, ymin = 1.05, ymax = 1.19),
+               corners = 0.1, shadow = TRUE) +
+  geom_magnify(from = c(xmin = 2.5, xmax = 3.5, ymin = 0.996, ymax = 1.003), 
+               to = c(xmin = 2.55, xmax = 3.65, ymin = 1.05, ymax = 1.19),
+               corners = 0.1, shadow = TRUE) + ylim(0.5,1.5)
+figure1
+```
+
+```{r, echo=F}
+# This part is relevant if you run the notebooks inside the docker and want to save graphs and image in a shared host volume called shared_files (uncomment and/or adjust on demand):
+
+# ggsave("/home/rstudio/shared_files/Figure1.pdf", plot = figure1, width = 7, height = 3.5, dpi = 300)
+# ggsave("/home/rstudio/shared_files/Figure1.png", plot = figure1, width = 7, height = 3.5, dpi = 800)
+# save.image(file = "/home/rstudio/shared_files/EMCS_illustration_401k.RData")
+```
