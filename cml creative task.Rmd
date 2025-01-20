@@ -1,0 +1,117 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code.
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*.
+
+
+
+```{r}
+ #Load necessary packages
+if (!require("OutcomeWeights")) install.packages("OutcomeWeights", dependencies = RUE)
+library(OutcomeWeights)
+library(grf)
+library(ivmodel)
+library(mice)
+library(dplyr)
+## Load and Impute Card Data
+data("card.data")
+set.seed(123)
+# drop some columns\
+df <- card.data
+df <-df %>% select(-id, -fatheduc, -motheduc, -KWW, -weight, -reg661,   -reg662,   -reg663,   -reg664,   ,-reg665,  -reg666,   -reg667,   -reg668,   -reg669,   -south66)
+imputed_data <- mice(df, m = 5, method = "cart", seed = 123)
+df <- complete(imputed_data)
+
+# Define variables
+Y <- exp(df$lwage)      # Outcome (log wage)
+D <- df$enroll     # Treatment (years of education)
+X <- df %>% select(-lwage, -enroll) %>% as.matrix()  # Covariates
+
+# Run Outcome Regression and Extract Smoother Matrix
+forest.Y <- regression_forest(X, Y)
+Y.hat <- predict(forest.Y)$predictions
+outcome_smoother <- get_forest_weights(forest.Y)
+
+# Run Causal Forest with External Y.hats
+c.forest <- causal_forest(X, Y, D, Y.hat = Y.hat)
+
+# Predict CATE using Causal Forest
+cate.oob <- predict(c.forest)$predictions
+
+# Calculate Outcome Weights
+omega_oob <- get_outcome_weights(c.forest, S = outcome_smoother)
+
+# Validate that outcome weights replicate CATEs
+all.equal(as.numeric(omega_oob$omega %*% Y), as.numeric(cate.oob))
+
+# Compute Weighted ATE
+omega_ate <- get_outcome_weights(c.forest , target = "ATE", S = outcome_smoother, S.tau = omega_oob$omega)
+all.equal(as.numeric(omega_ate$omega %*% Y), as.numeric(average_treatment_effect(c.forest, target.sample = "treated")[1]))
+
+cat("Estimated ATE using Outcome Weights:", mean(as.numeric(omega_ate$omega %*% Y)), "\n")
+cat("Estimated ATE using Causal Forest:", as.numeric(average_treatment_effect(c.forest, target.sample = "treated")[1]), "\n")
+
+```
+
+```{r}
+Y_matrix <- matrix(Y, ncol = 1)
+
+# Compute Subgroup-Specific Weights
+subgroup_weighted_ATE <- function(subgroup_var, group_value) {
+  # Extract subgroup X matrix (covariates only)
+  X_subgroup <- df[df[[subgroup_var]] == group_value, ] %>% select(-lwage, -enroll) %>% as.matrix()
+  # Ensure correct column names
+  colnames(X_subgroup) <- colnames(X)
+  #print(X_subgroup)
+  # Compute outcome weights for subgroup
+  omega_subgroup <- get_outcome_weights(c.forest, S = outcome_smoother, newdata = X_subgroup)
+  #print(omega_subgroup)
+
+  # Ensure matrix dimensions are correct
+  omega_subgroup$omega <- omega_subgroup$omega[1:nrow(X_subgroup), ]
+  
+  # Compute weighted ATE for subgroup
+  ATE_subgroup <- as.numeric(omega_subgroup$omega %*% Y_matrix)
+  #print(ATE_subgroup)
+
+  return(ATE_subgroup)
+}
+
+ATE_black <- subgroup_weighted_ATE("black", 1)
+ATE_white <- subgroup_weighted_ATE("black", 0)
+ATE_urban <- subgroup_weighted_ATE("smsa", 1)
+ATE_rural <- subgroup_weighted_ATE("smsa", 0)
+#ATE_married <- subgroup_weighted_ATE("married", 1)
+#ATE_single <- subgroup_weighted_ATE("married", 0)
+ATE_lib_0 <- subgroup_weighted_ATE("libcrd14", 1)
+ATE_lib_1 <- subgroup_weighted_ATE("libcrd14", 0)
+ATE_near_c2 <- subgroup_weighted_ATE("nearc2", 1)
+ATE_near_c2_0 <- subgroup_weighted_ATE("nearc2", 0)
+ATE_near_c4 <- subgroup_weighted_ATE("nearc4", 1)
+ATE_near_c4_0 <- subgroup_weighted_ATE("nearc4", 0)
+cat("📌 Weighted ATE for library card not-holding individuals:", mean(ATE_lib_0), "\n")
+cat("📌 Weighted ATE for library card holding individuals:", mean(ATE_lib_1), "\n")
+cat("📌 Weighted ATE for Black individuals:", mean(ATE_black), "\n")
+cat("📌 Weighted ATE for White individuals:", mean(ATE_white), "\n")
+cat("📌 Weighted ATE for Urban individuals:", mean(ATE_urban), "\n")
+cat("📌 Weighted ATE for Rural individuals:", mean(ATE_rural), "\n")
+cat("📌 Weighted ATE for near a 2year college individuals:", mean(ATE_near_c2), "\n")
+cat("📌 Weighted ATE for not near a 2year college individuals:", mean(ATE_near_c2_0), "\n")
+cat("📌 Weighted ATE for near a 4 year college individuals:", mean(ATE_near_c4), "\n")
+cat("📌 Weighted ATE for  not near a 4 year college individuals:", mean(ATE_near_c4_0), "\n")
+#cat("📌 Weighted ATE for Married individuals:", ATE_married, "\n")
+#cat("📌 Weighted ATE for Single individuals:", ATE_single, "\n")
+
+```
+
+```{r}
+library(ggplot2)
+#make a comparative bar plot of if someone is enrolled or not by their education
+ggplot(df, aes(x = educ, fill = as.factor(enroll))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Enrollment by Education Level", x = "Enrollment Status", y = "Count")
+```
