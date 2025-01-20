@@ -1,8 +1,10 @@
 ---
 title: "R Notebook"
 output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
-
 
 # Section 1 Average Effects
 
@@ -15,41 +17,49 @@ if (!require("tidyverse")) install.packages("tidyverse", dependencies = TRUE); l
 if (!require("viridis")) install.packages("viridis", dependencies = TRUE); library(viridis)
 if (!require("gridExtra")) install.packages("gridExtra", dependencies = TRUE); library(gridExtra)
 library(ivmodel)
+if (!require("reshape2")) install.packages("reshape2", dependencies = TRUE); library(reshape2)
 ```
-
 
 ```{r}
 library(mice)
+data <- read.csv("/Users/kubraozdemir/Downloads/CML/Group Assignment/balanced_data_nearc2.csv")
+#check for missing values
+sum(is.na(data))
+#imputed_data <- mice(df, m = 5, method = "cart", seed = 123)
+#data <- complete(imputed_data)
+#export data to csv
 
-imputed_data <- mice(card.data, m = 5, method = "cart", seed = 123)  # Predictive mean matching
-data <- complete(imputed_data)
 ```
-
 
 ```{r}
-data<-card.data
-data = na.omit(data)
+#data<-card.data
+#data = na.omit(data)
 ```
-
 
 ```{r}
 # Treatment
-D = data$enroll
-# Instrument
-Z = data$nearc2
+D = data$nearc2
+# Instrument (make a column of ones same length as D)
+#Z = rep(0, length(Y))
+Z = data$black
 # Outcome
-Y = data$lwage
+Y = exp(data$lwage)
+#convert y which is log scale to normal scale
+
 # Controls
-X = model.matrix(~ 0 +  age + fatheduc + motheduc + weight + momdad14 + sinmom14 + step14 + black + smsa + south + smsa66 + wage + KWW + IQ + married + libcrd14 + exper + expersq + region, data = data)
-var_nm = c(  "age"   ,   "fatheduc", "motheduc" ,"weight" ,"momdad14"
-           ,"sinmom14" ,"step14"  , "black"                     ,"smsa"     ,"south"  ,"smsa66"  , "wage"     ,"KWW"      ,"IQ"      , "married"                    ,"libcrd14" ,"exper"  ,"expersq"  ,"region" )
-colnames(X) = var_nm
+X <- data %>% select(-lwage, -nearc2, -black,-wage) %>% as.matrix()
 ```
 
-X = model.matrix(~ 0 + nearc2  + nearc4 + age + fatheduc + motheduc + weight + momdad14 + sinmom14 + step14 + reg661 + reg662 + reg663 + reg664 + reg665 + reg666 + reg667 + reg668 + reg669 + south66 + black + smsa + south + smsa66 + wage + KWW + IQ + married + libcrd14 + exper + expersq + region, data = card.data)
-var_nm = c("nearc2"  , "nearc4"    ,   "age"   ,   "fatheduc", "motheduc" ,"weight" ,"momdad14"
-           ,"sinmom14" ,"step14"   ,"reg661"   ,"reg662"   ,"reg663"  , "reg664"   
-           ,"reg665"  ,"reg666"   ,"reg667"   ,"reg668"  , "reg669"  , "south66" , "black"                     ,"smsa"     ,"south"  ,"smsa66"  , "wage"     ,"KWW"      ,"IQ"      , "married"                    ,"libcrd14" ,"exper"  ,"expersq"  ,"region" )
+X = model.matrix(\~ 0 + nearc2 + nearc4 + age + fatheduc + motheduc +
+weight + momdad14 + sinmom14 + step14 + reg661 + reg662 + reg663 +
+reg664 + reg665 + reg666 + reg667 + reg668 + reg669 + south66 + black +
+smsa + south + smsa66 + wage + KWW + IQ + married + libcrd14 + exper +
+expersq + region, data = card.data) var_nm = c("nearc2" , "nearc4" ,
+"age" , "fatheduc", "motheduc" ,"weight" ,"momdad14" ,"sinmom14"
+,"step14" ,"reg661" ,"reg662" ,"reg663" , "reg664"\
+,"reg665" ,"reg666" ,"reg667" ,"reg668" , "reg669" , "south66" , "black"
+,"smsa" ,"south" ,"smsa66" , "wage" ,"KWW" ,"IQ" , "married" ,"libcrd14"
+,"exper" ,"expersq" ,"region" )
 
 ### 2 Fold
 
@@ -60,6 +70,40 @@ dml_2f = dml_with_smoother(Y,D,X,Z,
 results_dml_2f = summary(dml_2f)
 plot(dml_2f)
 ```
+
+### **Interpretation**
+
+-   **PLR Estimate:** **54.65**, statistically significant (**p =
+    0.00072**)
+
+-   **PLR-IV Estimate:** **-250.05**, not significant (**p = 0.4453**)
+
+-   **AIPW-ATE Estimate:** **46.51**, statistically significant (**p =
+    3.01e-05**)
+
+-   **Wald-AIPW Estimate:** **-6770.94**, not significant (**p =
+    0.8166**)
+
+-   The **PLR and AIPW-ATE estimates** suggest a positive and
+    statistically significant treatment effect.
+
+-   The **PLR-IV and Wald-AIPW estimates** are not statistically
+    significant, indicating weak or noisy IV-based estimates.
+
+-   The **wide confidence interval in Wald-AIPW** suggests instability
+    in that estimator.
+
+-   The plot illustrates the **point estimates and their standard
+    errors**.
+
+-   **PLR and AIPW-ATE show precise estimates**, while Wald-AIPW has
+    large uncertainty.
+
+-   **PLR and AIPW-ATE provide reliable estimates**, while **IV-based
+    approaches are weak in this setting**.
+
+-   Further robustness checks are necessary to validate results.
+
 ```{r}
 omega_dml_2f = get_outcome_weights(dml_2f)
 cat("ω'Y replicates point etimates?", 
@@ -68,14 +112,11 @@ cat("ω'Y replicates point etimates?",
     ))
 ```
 
-
 ```{r, echo = F, results='hide'}
 # As the `dml_with_smoother()` objects are memory intensive because they store several $N \times N$ smoother matrices, it is convenient to remove the 2-fold one before proceeding. Comment out if you have enough RAM and want to use the objects later on.
 rm(dml_2f)
 gc()
 ```
-
-
 
 ### 5-fold
 
@@ -89,6 +130,35 @@ results_dml_5f = summary(dml_5f)
 plot(dml_5f)
 ```
 
+## **Key Findings**
+
+-   **PLR Estimate:** **56.46**, statistically significant (**p =
+    0.00127**)
+-   **PLR-IV Estimate:** **-326.86**, not significant (**p = 0.3514**)
+-   **AIPW-ATE Estimate:** **48.12**, statistically significant (**p =
+    1.24e-05**)
+-   **Wald-AIPW Estimate:** **-372,630**, not significant (**p =
+    0.9969**)
+
+## **Comparison with 2-Fold Cross-Fitting**
+
+-   **PLR and AIPW-ATE remain significant**, with similar effect sizes.
+-   **PLR-IV and Wald-AIPW remain non-significant**, indicating weak
+    IV-based estimates.
+-   **Variance increases slightly**, but **point estimates remain
+    stable** across folds.
+-   The plot confirms that **PLR and AIPW-ATE provide reliable
+    estimates**, while **Wald-AIPW has extreme variability**.
+-   **5-Fold cross-fitting does not drastically alter results**,
+    reinforcing stability.
+-   **Garbage collection was performed** to free memory after running
+    the 5-fold estimator.
+-   **Results remain consistent across folds**.
+-   **PLR and AIPW-ATE are robust**, while IV-based methods remain
+    unstable.
+-   **Cross-fitting improves variance estimation but does not alter
+    conclusions**.
+
 extract the weights and confirm numerical equivalence:
 
 ```{r}
@@ -99,18 +169,19 @@ cat("ω'Y replicates point etimates?",
     ))
 ```
 
-
 ```{r, echo = F, results='hide'}
 # As the `dml_with_smoother()` objects are memory intensive because they store several $N \times N$ smoother matrices, it is convenient to remove the 5-fold one before proceeding. Comment out if you have enough RAM and want to use the objects later on.
 rm(dml_5f)
 gc()
 ```
 
-
 ## Check covariate balancing
 
-We use the infrastructure of the `cobalt` package to plot Standardized Mean Differences where we need to flip the sign of the untreated outcome weights to make them compatible with the package framework. This is achieved by multiplying the outcome weights by $2 \times D-1$:
-gr
+We use the infrastructure of the `cobalt` package to plot Standardized
+Mean Differences where we need to flip the sign of the untreated outcome
+weights to make them compatible with the package framework. This is
+achieved by multiplying the outcome weights by $2 \times D-1$: gr
+
 ```{r, message = F}
 threshold = 0.1
 
@@ -141,9 +212,8 @@ love_plot_waipw = create_love_plot("Wald-AIPW", 4)
 love_plot_plr
 love_plot_plriv
 love_plot_aipw
-love_plot_waipw
+#love_plot_waipw
 ```
-
 
 Create the combined plot that ends up in the paper as Figure 2:
 
@@ -155,7 +225,41 @@ figure2 = grid.arrange(
 )
 ```
 
-## Hetrogenous Effects
+```{r}
+#causal_forest = causal_forest(X,Y,D)
+#weights<-get_forest_weights(causal_forest)
+#boxplot(weights ~ X, main = "Weights by Race", xlab = "Race", ylab = "Outcome Weights")
+```
+
+### **Key Observations**
+
+-   **PLR and AIPW** adjustments effectively reduce standardized mean
+    differences.
+-   **PLR-IV and Wald-AIPW** show significant instability, with **large
+    imbalances in covariates**.
+-   **2-Fold vs. 5-Fold Comparison:**
+    -   **PLR and AIPW adjustments are consistent across folds**.
+    -   **PLR-IV and Wald-AIPW exhibit greater variability** with the
+        5-fold approach.
+    -   **Wald-AIPW shows extreme imbalance**, indicating potential
+        model instability.
+
+### **Conclusion**
+
+-   **PLR and AIPW show stable and reliable covariate balance
+    adjustments.**
+-   **PLR-IV and Wald-AIPW require further investigation due to
+    instability.**
+-   **5-Fold cross-fitting does not drastically alter balance for PLR
+    and AIPW, but increases variability for IV-based methods.**
+
+```{r}
+#boxplot(omega_dml_5f$omega ~ data$black, main = "Weights by Race", xlab = "Race", ylab = "Outcome Weights")
+
+```
+
+## Heterogenous Effects
+
 ```{r}
 ### Externally calculate outcome nuisance
 rf_Y.hat_default = regression_forest(X,Y)
@@ -203,6 +307,7 @@ cat("\nω'Y replicates CATE point estimates (tuned)?",
       as.numeric(cates_tuned)
     ))
 ```
+
 ```{r}
 cb_cate_default = standardized_mean_differences(X,D,omega_cf_default$omega,X)
 cb_cate_tuned = standardized_mean_differences(X,D,omega_cf_tuned$omega,X)
@@ -236,10 +341,12 @@ figure3 = ggplot(df_long, aes(x = factor(Variable, levels = rev(unique(Variable)
   coord_flip()
 figure3
 ```
+
 ```{r}
 ivf_default = instrumental_forest(X,Y,D,Z,Y.hat=Y.hat_default)
 ivf_tuned = instrumental_forest(X,Y,D,Z,Y.hat=Y.hat_tuned,tune.parameters = "all")
 ```
+
 ```{r}
 clates_default = predict(ivf_default)$predictions
 clates_tuned = predict(ivf_tuned)$predictions
@@ -288,13 +395,49 @@ ggplot(df_long, aes(x = factor(Variable, levels = rev(unique(Variable))), y = Va
   coord_flip()
 ```
 
+### **Key Observations**
+
+-   Compared to the previous **CATE balance plot**, **CLATE estimates
+    exhibit much greater variability** in absolute standardized mean
+    differences.
+-   The **spread of covariate imbalances is significantly larger**, with
+    extreme outliers reaching values beyond **2000**, indicating poor
+    balance in some covariates.
+-   **Tuning improves balance marginally**, but high variability
+    persists compared to the **CATE results**, where the effect of
+    tuning was more noticeable.
+-   Some covariates (e.g., `region`, `smsa66`, `married`, and `weights`)
+    display **drastically larger imbalances** in **CLATE** than in
+    **CATE**, suggesting that localized treatment effects may be highly
+    sensitive to specific covariates.
+
+### **Comparison with the Previous CATE Plot**
+
+-   **CATE tuning effectively reduced imbalances**, but **CLATE tuning
+    has a weaker effect**.
+
+-   **CLATE exhibits extreme outliers**, whereas **CATE had a more
+    controlled distribution of imbalances**.
+
+-   **Default models perform poorly in both cases**, but **tuning has a
+    greater impact in CATE than CLATE**.
+
+-   **CATE tuning achieves better covariate balance**, while **CLATE
+    tuning struggles with extreme imbalances**.
+
+-   **Local treatment effect estimation may be highly unstable**,
+    requiring additional adjustments.
+
+-   Further refinement in **modeling and variable selection** may be
+    necessary to reduce excessive imbalances in **CLATE**.
+
 ```{r}
-data = data.frame(
+data_cate = data.frame(
   value = c(cates_default, cates_tuned,clates_default, clates_tuned),
   category = rep(c("grf CATEs default", "grf CATEs tuned","grf CLATEs default", "grf CLATEs tuned"), each = length(cates_default))
 )
 
-ggplot(data, aes(y = category, x = value, fill = category)) +
+ggplot(data_cate, aes(y = category, x = log(value), fill = category)) +
   geom_boxplot(alpha = 0.7) +
   geom_vline(xintercept = 0, color = "black", linetype = "solid") +
   labs(
@@ -305,16 +448,46 @@ ggplot(data, aes(y = category, x = value, fill = category)) +
   theme(legend.position = "none")
 ```
 
+### **Key Observations**
+
+-   **CATE estimates (lower two boxplots) are more stable** with smaller
+    interquartile ranges (IQRs).
+-   **CLATE estimates (upper two boxplots) show much greater
+    variability**, especially in the default implementation.
+-   **Tuning reduces variability** for both **CATEs and CLATEs**, but
+    the effect is much stronger for **CATEs**.
+-   **GRF CLATE default has the widest range**, suggesting high
+    sensitivity in estimating local treatment effects.
+
+### **Comparison: Default vs. Tuned**
+
+-   **CATE tuning effectively narrows the range**, making estimates more
+    stable.
+
+-   **CLATE tuning also reduces variability**, but a substantial range
+    remains.
+
+-   **CLATE estimates exhibit more extreme outliers**, indicating higher
+    sensitivity to tuning.
+
+-   **Tuning is beneficial for both CATEs and CLATEs, but its impact is
+    more pronounced for CATEs**.
+
+-   **CLATEs remain highly variable even after tuning**, requiring
+    further investigation.
+
+-   **CATE models appear more robust**, making them preferable for
+    stable treatment effect estimation.
+
 ```{r}
 if (!require("viridis")) install.packages("viridis", dependencies = TRUE); library(viridis)
 if (!require("reshape2")) install.packages("reshape2", dependencies = TRUE); library(reshape2)
 if (!require("ggridges")) install.packages("ggridges", dependencies = TRUE); library(ggridges)
 ```
 
-
 ```{r}
 # Create the ridge plot
-ggplot(data, aes(x = value, y = category, fill = category)) +
+ggplot(data_cate, aes(x = log(value), y = category, fill = category)) +
   geom_density_ridges(alpha = 0.7, scale = 1) +
   labs(
     x = "Estimate",
@@ -380,3 +553,97 @@ for (i in 1:dim(summary_weights_if_tuned)[3]) {
 }
 
 ```
+
+## **Key Findings**
+
+### **1. Minimum & Maximum Weights**
+
+-   **IF exhibits extreme weight variability**, even after tuning.
+-   **CF remains stable, with controlled min/max weights**.
+
+🔹 **Takeaway:** CF is **more reliable**, while **IF remains unstable**.
+
+------------------------------------------------------------------------
+
+### **2. % Negative Weights**
+
+-   **IF has a high percentage of negative weights**, increasing bias.
+-   **CF has fewer negatives**, further reduced by tuning.
+
+🔹 **Takeaway:** CF **minimizes negative weight bias**, making it
+**preferable**.
+
+------------------------------------------------------------------------
+
+### **3. Sum of Largest 10% of Weights**
+
+-   **IF assigns excessive weight to few observations**.
+-   **CF distributes weights more evenly**.
+
+🔹 **Takeaway:** **CF ensures better generalization**, while **IF
+over-relies on few points**.
+
+------------------------------------------------------------------------
+
+### **4. Total & Absolute Weights**
+
+-   **IF shows large weight variation**, indicating instability.
+-   **CF maintains balance, even before tuning**.
+
+🔹 **Takeaway:** CF provides **consistent results**, while IF **remains
+sensitive to tuning**.
+
+------------------------------------------------------------------------
+
+## **Conclusion**
+
+1.  **CF is more stable and robust** across all metrics.
+2.  **Tuning benefits CF significantly**, but has **limited impact on
+    IF**.
+3.  **CF is recommended for causal inference**, ensuring **balanced,
+    unbiased estimates**.
+
+iv_model \<- ivmodel(Y = card.data$lwage, D = card.data$educ, Z =
+card.data\$nearc4, X = card.data[, c("exper", "expersq", "black",
+"south", "smsa", "reg661", "reg662", "reg663", "reg664", "reg665",
+"reg666", "reg667", "reg668")])
+
+# Residuals from the first stage regression
+
+first_stage \<- lm(educ \~ nearc4 + exper + expersq + black + south +
+smsa + reg661 + reg662 + reg663 + reg664 + reg665 + reg666 + reg667 +
+reg668, data = card.data) card.data\$residuals_first_stage \<-
+resid(first_stage)
+
+# Residuals from the second stage regression
+
+second_stage \<- lm(lwage \~ residuals_first_stage + exper + expersq +
+black + south + smsa + reg661 + reg662 + reg663 + reg664 + reg665 +
+reg666 + reg667 + reg668, data = card.data)
+card.data\$residuals_second_stage \<- resid(second_stage)
+
+outcome_weights \<-
+card.data$residuals_second_stage / sum(card.data$residuals_second_stage)
+
+normalized_weights \<- outcome_weights / sum(outcome_weights)
+weighted_variance \<- sum(normalized_weights \*
+(card.data$lwage - mean(card.data$lwage))\^2)
+
+set.seed(123) bootstrap_variances \<- replicate(1000, { sample_indices
+\<- sample(1:nrow(card.data), replace = TRUE) bootstrap_sample \<-
+card.data[sample_indices, ] first_stage_bootstrap \<- lm(educ \~
+nearc4 + exper + expersq + black + south + smsa + reg661 + reg662 +
+reg663 + reg664 + reg665 + reg666 + reg667 + reg668, data =
+bootstrap_sample)
+bootstrap_sample$residuals_first_stage <- resid(first_stage_bootstrap)
+  second_stage_bootstrap <- lm(lwage ~ residuals_first_stage + exper + expersq + black + south + smsa + reg661 + reg662 + reg663 + reg664 + reg665 + reg666 + reg667 + reg668, data = bootstrap_sample)
+  bootstrap_sample$residuals_second_stage \<-
+resid(second_stage_bootstrap) outcome_weights_bootstrap \<-
+bootstrap_sample$residuals_second_stage / sum(bootstrap_sample$residuals_second_stage)
+normalized_weights_bootstrap \<- outcome_weights_bootstrap /
+sum(outcome_weights_bootstrap) sum(normalized_weights_bootstrap \*
+(bootstrap_sample$lwage - mean(bootstrap_sample$lwage))\^2) })
+variance_estimate \<- mean(bootstrap_variances)
+
+{r} cat("Variance estimate:", variance_estimate)
+plot(bootstrap_variances)
